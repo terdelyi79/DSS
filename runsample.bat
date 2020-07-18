@@ -1,0 +1,1 @@
+.\OrderScheduler\bin\Release\OrderScheduler.exe .\sample_input\orders.csv .\sample_output\orderschedule.csv .\sample_output\workschedule.csv
