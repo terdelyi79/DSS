@@ -1,0 +1,14 @@
+18:40:00.431 INFO Order scheduler is started
+18:40:00.454 INFO Reading orders from the input file
+18:40:00.484 INFO Starting the scheduling algorithm
+18:40:01.462 INFO Scheduling successfully finished
+18:40:01.462 INFO Exporting the order schedule
+18:40:01.462 INFO Exporting the work schedule
+18:40:01.479 INFO Order scheduler successfully finished
+18:40:10.618 INFO Order scheduler is started
+18:40:10.622 INFO Reading orders from the input file
+18:40:10.627 INFO Starting the scheduling algorithm
+18:40:11.550 INFO Scheduling successfully finished
+18:40:11.550 INFO Exporting the order schedule
+18:40:11.566 INFO Exporting the work schedule
+18:40:11.566 INFO Order scheduler successfully finished

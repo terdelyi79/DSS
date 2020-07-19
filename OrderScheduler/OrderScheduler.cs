@@ -38,13 +38,15 @@ namespace OrderScheduler
             {
                 logger.Info("Starting the scheduling algorithm");
 
-                List<Order> orders = new List<Order>(this.orders);
+
 
                 // Calculate the difference between deadline and date when order would be finished when it would be alone for each order, and sort them
                 Dictionary<Order, TimeSpan> aloneScheduleDate = new Dictionary<Order, TimeSpan>();
-                foreach (Order order in orders)
+                foreach (Order order in this.orders)
                     aloneScheduleDate.Add(order, order.Deadline - this.CalculatePenalties(new List<Order>() { order }, out _)[0].FinishDate);
-                orders.Sort((order1, order2) => TimeSpan.Compare(aloneScheduleDate[order2], aloneScheduleDate[order1]));
+                this.orders.Sort((order1, order2) => TimeSpan.Compare(aloneScheduleDate[order2], aloneScheduleDate[order1]));
+
+                List<Order> orders = new List<Order>(this.orders);
 
                 // Current schedule
                 List<Resource>[] schedule = null;
@@ -52,58 +54,100 @@ namespace OrderScheduler
                 List<Penalty> penalties = null;
                 // Total penalty for current schedule
                 int currentPenalty = int.MaxValue;
+                int currentRemainingTime = int.MaxValue;
                 // Number of orders we decided to not move
                 int fixedOrderCount = 0;
 
+                // Calculate penalties for current schedule
+                penalties = this.CalculatePenalties(orders, out schedule);
+
                 // While it's possible to find better solution by changing two neighbour orders in the schedule
-                while (fixedOrderCount < orders.Count - 1)
+                while (fixedOrderCount < orders.Count)
                 {
-                    // Calculate penalties for current schedule
-                    penalties = this.CalculatePenalties(orders, out schedule);
+                    Penalty penaltyToChange = penalties[fixedOrderCount];
 
-                    // Claculate total penalty and find order with highest penalty
-                    int index = 0, maxPenalty = 0, totalPenalty = 0;
-                    foreach (Penalty penalty in penalties)
+                    List<Order> ordersBackup = new List<Order>(this.orders);
+
+                    bool bettersolutionFound = false;
+
+                    List<Penalty>[] tryoutPenalties = new List<Penalty>[penaltyToChange.OrderIndex];
+                    List<Resource>[][] tryoutSchedules = new List<Resource>[penaltyToChange.OrderIndex][];
+                    List<Order>[] tryoutOrders = new List<Order>[penaltyToChange.OrderIndex];
+
+                    Parallel.For(1, penaltyToChange.OrderIndex + 1, (n) =>
                     {
-                        if (penalty.Amount > maxPenalty)
-                            maxPenalty = penalty.Amount;
-                        totalPenalty += penalty.Amount;
-                        index++;
+                        List<Order> tryoutOrder = new List<Order>(orders);
+                        Penalty previousPenalty = penalties.Where(p => p.OrderIndex == penaltyToChange.OrderIndex - n).FirstOrDefault();
+
+                        if (previousPenalty.Amount <= penaltyToChange.Amount)
+                        {
+                            // Change penlty with previous one
+                            Order order = tryoutOrder[previousPenalty.OrderIndex];
+                            tryoutOrder[previousPenalty.OrderIndex] = tryoutOrder[penaltyToChange.OrderIndex];
+                            tryoutOrder[penaltyToChange.OrderIndex] = order;
+                        }
+                        else
+                        {
+                            return;
+                        }
+
+                        // Calculate penalties for current schedule
+                        tryoutPenalties[n - 1] = this.CalculatePenalties(tryoutOrder, out List<Resource>[] sched);
+                        tryoutSchedules[n - 1] = sched;
+                        tryoutOrders[n - 1] = tryoutOrder;
+                    });
+
+                    int m = 0;
+                    foreach (List<Penalty> p in tryoutPenalties)
+                    {
+                        if (p == null)
+                        {
+                            m++;
+                            continue;
+                        }
+                        penalties = p;
+                        schedule = tryoutSchedules[m];
+                        orders = tryoutOrders[m];
+                        m++;
+
+                        // Claculate total penalty and find order with highest penalty
+                        int index = 0, maxPenalty = 0, totalPenalty = 0;
+                        int totalRemainingTime = 0;
+                        foreach (Penalty penalty in penalties)
+                        {
+                            if (penalty.Amount > maxPenalty)
+                                maxPenalty = penalty.Amount;
+                            totalPenalty += penalty.Amount;
+                            totalRemainingTime += penalty.ReaminingTime;
+                            index++;
+                        }
+
+                        // If change leads to a better solution
+                        if ((totalPenalty < currentPenalty) || (totalPenalty == currentPenalty) && (totalRemainingTime < currentRemainingTime))
+                        {                            
+                            currentPenalty = totalPenalty;
+                            currentRemainingTime = totalRemainingTime;
+                            fixedOrderCount = 0;
+                            this.penalties = penalties;
+                            this.schedule = schedule;
+                            this.orders = new List<Order>(orders);
+                            ordersBackup = new List<Order>(orders);
+                            bettersolutionFound = true;
+                        }
                     }
 
-                    // If change leads to a better solution
-                    if (totalPenalty < currentPenalty)
-                    {
-                        currentPenalty = totalPenalty;
-                        fixedOrderCount = 0;
-                        this.penalties = penalties;
-                        this.schedule = schedule;
-                        this.orders = new List<Order>(orders);
-                    }
+
+
+
                     // If change can't provide a better solution
-                    else
+                    if (!bettersolutionFound)
                     {
+                        orders = ordersBackup;
                         // Cobtinue with smaller penalties
                         fixedOrderCount++;
                     }
 
-                    // Order penalties by descending order
-                    penalties.Sort((p1, p2) => { if (p1.Amount < p2.Amount) return -1; if (p1.Amount == p2.Amount) return 0; else return 1; });
-                    penalties.Reverse();
 
-                    Penalty penaltyToChange = penalties[fixedOrderCount];
-
-                    if (penaltyToChange.OrderIndex != 0)
-                    {
-                        Penalty previousPenalty = penalties.Where(p => p.OrderIndex == penaltyToChange.OrderIndex - 1).FirstOrDefault();
-                        if (previousPenalty.Amount < penaltyToChange.Amount)
-                        {
-                            // Change penlty with previous one
-                            Order order = orders[previousPenalty.OrderIndex];
-                            orders[previousPenalty.OrderIndex] = orders[penaltyToChange.OrderIndex];
-                            orders[penaltyToChange.OrderIndex] = order;
-                        }
-                    }
                 }
 
                 logger.Info("Scheduling successfully finished");
@@ -187,11 +231,26 @@ namespace OrderScheduler
                 DateTime finishDate = MinutesToDateTime(endOfPrevStep, false);
 
                 // Add penalty of current order to the results
-                Penalty penalty = new Penalty() { Amount = (int)Math.Ceiling((finishDate - order.Deadline).TotalDays) * order.PenaltyPerDay, FinishDate = finishDate, OrderIndex = orderIndex++ };
+                Penalty penalty = new Penalty() { Amount = (int)Math.Ceiling((finishDate - order.Deadline).TotalDays) * order.PenaltyPerDay, FinishDate = finishDate, OrderIndex = orderIndex++, ReaminingTime = (order.Deadline < finishDate) ? 0 : (int)(order.Deadline - finishDate).TotalMinutes };
                 if (penalty.Amount < 0)
                     penalty.Amount = 0;
                 penalties.Add(penalty);
             }
+
+            penalties.Sort((p1, p2) =>
+            {
+                if (p1.Amount < p2.Amount) return -1;
+                if (p1.Amount == p2.Amount)
+                {
+                    if (p1.ReaminingTime > p2.ReaminingTime)
+                        return -1;
+                    if (p1.ReaminingTime == p2.ReaminingTime)
+                        return 0;
+                    return 1;
+                }
+                else return 1;
+            });
+            penalties.Reverse();
 
             return penalties;
         }
@@ -334,6 +393,8 @@ namespace OrderScheduler
             public int OrderIndex { get; set; }
 
             public DateTime FinishDate { get; set; }
+
+            public int ReaminingTime { get; set; }
         }
 
         private class Resource
